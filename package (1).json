@@ -1,0 +1,59 @@
+{
+  "name": "virtustream-browser",
+  "version": "2.0.2",
+  "description": "Navigateur web avec onglets verticaux qui utilise une vidéo comme flux caméra virtuel",
+  "author": "Votre Nom <vous@example.com>",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win --x64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.virtustream.browser",
+    "productName": "VirtuStream Browser",
+    "directories": {
+      "buildResources": "build"
+    },
+    "asar": true,
+    "electronLanguages": [
+      "fr",
+      "en-US"
+    ],
+    "files": [
+      "main.js",
+      "preload-page.js",
+      "preload-toolbar.js",
+      "preload-preview.js",
+      "toolbar.html",
+      "newtab.html",
+      "preview.html",
+      "test.html",
+      "package.json"
+    ],
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "runAfterFinish": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "VirtuStream Browser",
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "${name}-setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "${name}-portable-${version}.${ext}"
+    }
+  }
+}

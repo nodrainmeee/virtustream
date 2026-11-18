@@ -55,6 +55,7 @@ let config = {
   showBookmarks: true,
   sidebarExpanded: false,
   permissions: {},      // origine -> true/false (caméra / micro)
+  audio: { enabled: false, outLabel: '', monitor: true, volume: 0.6 }, // son de l'aperçu → VB-Cable
   autoPreview: true     // ouvre l'aperçu flottant quand une page démarre la caméra
 };
 let previewWin = null;
@@ -74,6 +75,13 @@ function loadConfig() {
   if (![15, 24, 30].includes(Number(config.fps))) config.fps = 30;
   config.fps = Number(config.fps);
   if (typeof config.autoPreview !== 'boolean') config.autoPreview = true;
+  const a = config.audio && typeof config.audio === 'object' ? config.audio : {};
+  config.audio = {
+    enabled: !!a.enabled,
+    outLabel: typeof a.outLabel === 'string' ? a.outLabel.slice(0, 200) : '',
+    monitor: a.monitor !== false,
+    volume: Math.min(1, Math.max(0, Number(a.volume) || 0.6))
+  };
   if (typeof config.eco !== 'boolean') config.eco = os.totalmem() < 6 * 1024 ** 3; // auto : PC ≤ 4-6 Go
   if (config.videoPath && !fs.existsSync(config.videoPath)) config.videoPath = null;
 }
@@ -493,12 +501,12 @@ function openPreview() {
   if (!config.videoPath || !alive()) return;
   if (previewAlive()) { previewWin.showInactive(); return; }
   const wa = screen.getDisplayMatching(win.getBounds()).workArea;
-  const w = 360;
-  const h = 224;
+  const w = 440;
+  const h = 300;
   previewWin = new BrowserWindow({
     width: w, height: h,
     x: wa.x + wa.width - w - 16, y: wa.y + wa.height - h - 16,
-    minWidth: 200, minHeight: 130,
+    minWidth: 260, minHeight: 190,
     title: 'Aperçu de la caméra',
     alwaysOnTop: true, show: false, autoHideMenuBar: true,
     minimizable: false, maximizable: false, fullscreenable: false,
@@ -776,7 +784,7 @@ function buildAppMenu() {
 
 // ---------- Session (permissions, vidéo, téléchargements) ----------
 function isTrustedLocal(url) {
-  return url.startsWith(TEST_PAGE.split('test.html')[0]) && url.includes('test.html');
+  return url.startsWith(TEST_PAGE.split('test.html')[0]) && (url.includes('test.html') || url.includes('preview.html'));
 }
 
 async function askMedia(url) {
@@ -824,7 +832,13 @@ function setupSession() {
     } else cb(simple.includes(permission));
   });
   ses.setPermissionCheckHandler((_wc, permission, requestingOrigin) => {
-    if (permission === 'media') return config.permissions[requestingOrigin] === true;
+    if (permission === 'media') {
+      // Les sites (WhatsApp…) interrogent l'état avant d'appeler la caméra : on répond « autorisé »
+      // tant que vous n'avez pas refusé ce site. La vraie demande s'affiche à l'utilisation.
+      if (/^file:/i.test(String(requestingOrigin))) return true; // pages internes (aperçu : noms des sorties audio)
+      if (!/^https:\/\//i.test(requestingOrigin) && !/^http:\/\/localhost(:\d+)?$/i.test(requestingOrigin)) return false;
+      return config.permissions[requestingOrigin] !== false;
+    }
     return simple.includes(permission);
   });
 
@@ -932,6 +946,17 @@ function setupIpc() {
     if (w > 0 && h > 0) previewWin.setAspectRatio(w / h);
   });
   ipcMain.handle('toggle-preview', togglePreview);
+  ipcMain.handle('pv-get', (e) => (previewAlive() && e.sender === previewWin.webContents ? config.audio : null));
+  ipcMain.handle('pv-set', (e, p) => {
+    if (!previewAlive() || e.sender !== previewWin.webContents || !p) return;
+    config.audio = {
+      enabled: !!p.enabled,
+      outLabel: typeof p.outLabel === 'string' ? p.outLabel.slice(0, 200) : '',
+      monitor: p.monitor !== false,
+      volume: Math.min(1, Math.max(0, Number(p.volume) || 0))
+    };
+    saveConfig();
+  });
 
   ipcMain.handle('nav', (_e, url) => {
     const wc = wcOf(activeTab());
