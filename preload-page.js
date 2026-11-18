@@ -22,6 +22,7 @@ function inject(cfg) {
   let canvas = null;       // utilisé seulement pour RÉDUIRE la résolution
   let users = 0;           // nombre de pistes actives
   let releaseTimer = 0;
+  let timeTimer = 0;
   let frameCount = 0;
   let fpsMeasured = 0;
   let fpsTimer = 0;
@@ -127,13 +128,19 @@ function inject(cfg) {
     users++;
     clearTimeout(releaseTimer);
     notify(true);
+    if (!timeTimer) {
+      // Envoie la position de lecture réelle pour que l'aperçu flottant reste synchronisé
+      timeTimer = setInterval(() => {
+        if (v) { try { window.postMessage({ __fakecamTime: v.currentTime }, '*'); } catch (_) {} }
+      }, 2000);
+    }
     const origStop = clone.stop.bind(clone);
     let stopped = false;
     const done = () => {
       if (stopped) return;
       stopped = true;
       users = Math.max(0, users - 1);
-      if (users === 0) { notify(false); scheduleRelease(); }
+      if (users === 0) { notify(false); clearInterval(timeTimer); timeTimer = 0; scheduleRelease(); }
     };
     clone.stop = () => { done(); origStop(); };
     clone.addEventListener('ended', done, { once: true });
@@ -221,15 +228,33 @@ function inject(cfg) {
   window.addEventListener('pagehide', () => { users = 0; release(); });
 }
 
+// Identité « Google Chrome » pour les sites qui lisent navigator.userAgentData
+function spoofBrands(major) {
+  try {
+    const ua = navigator.userAgentData;
+    if (!ua) return;
+    const brands = [
+      { brand: 'Chromium', version: major },
+      { brand: 'Google Chrome', version: major },
+      { brand: 'Not?A_Brand', version: '99' }
+    ];
+    Object.defineProperty(Object.getPrototypeOf(ua), 'brands', { get: () => brands, configurable: true });
+  } catch (_) {}
+}
+try {
+  const major = String(process.versions.chrome).split('.')[0];
+  webFrame.executeJavaScript(`(${spoofBrands.toString()})(${JSON.stringify(major)})`);
+} catch (_) {}
+
 try {
   const cfg = ipcRenderer.sendSync('get-config');
   if (cfg && cfg.videoUrl) {
     webFrame.executeJavaScript(`(${inject.toString()})(${JSON.stringify(cfg)})`);
     // Pont page → processus principal pour savoir si la caméra est utilisée (hibernation, indicateur)
     window.addEventListener('message', (e) => {
-      if (e.source === window && e.data && typeof e.data.__fakecamNotify === 'boolean') {
-        ipcRenderer.send('cam-state', e.data.__fakecamNotify);
-      }
+      if (e.source !== window || !e.data) return;
+      if (typeof e.data.__fakecamNotify === 'boolean') ipcRenderer.send('cam-state', e.data.__fakecamNotify);
+      else if (typeof e.data.__fakecamTime === 'number') ipcRenderer.send('cam-time', e.data.__fakecamTime);
     });
   }
 } catch (_) {}

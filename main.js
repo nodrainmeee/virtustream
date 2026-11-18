@@ -1,6 +1,6 @@
 const {
   app, BrowserWindow, WebContentsView, ipcMain, dialog, protocol, net,
-  session, Menu, shell, clipboard, nativeTheme
+  session, Menu, shell, clipboard, nativeTheme, screen
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -54,8 +54,10 @@ let config = {
   eco: null,            // null = auto (selon la RAM)
   showBookmarks: true,
   sidebarExpanded: false,
-  permissions: {}       // origine -> true/false (caméra / micro)
+  permissions: {},      // origine -> true/false (caméra / micro)
+  autoPreview: true     // ouvre l'aperçu flottant quand une page démarre la caméra
 };
+let previewWin = null;
 
 // ---------- Configuration ----------
 const configFile = () => path.join(app.getPath('userData'), 'config.json');
@@ -71,6 +73,7 @@ function loadConfig() {
   config.outRes = String(config.outRes);
   if (![15, 24, 30].includes(Number(config.fps))) config.fps = 30;
   config.fps = Number(config.fps);
+  if (typeof config.autoPreview !== 'boolean') config.autoPreview = true;
   if (typeof config.eco !== 'boolean') config.eco = os.totalmem() < 6 * 1024 ** 3; // auto : PC ≤ 4-6 Go
   if (config.videoPath && !fs.existsSync(config.videoPath)) config.videoPath = null;
 }
@@ -190,7 +193,8 @@ function sendStateNow() {
     showBookmarks: config.showBookmarks,
     fullscreen: htmlFullscreen,
     eco: config.eco,
-    camActive: tabs.some((t) => t.cams.size > 0)
+    camActive: tabs.some((t) => t.cams.size > 0),
+    previewOpen: !!previewWin && !previewWin.isDestroyed()
   });
 }
 
@@ -391,6 +395,7 @@ function clearVideo() {
   videoPaused = false;
   videoVersion++;
   saveConfig();
+  closePreview();
   sendState();
   toast('Vidéo retirée. Rechargez la page pour retrouver la caméra réelle.');
 }
@@ -410,6 +415,7 @@ function sendVideoCommand(cmd, arg) {
       try { f.send('fakecam-control', cmd, arg); } catch (_) {}
     });
   });
+  previewSend(cmd, arg);
 }
 
 function setPaused(p) {
@@ -476,6 +482,51 @@ async function showStats() {
   dialog.showMessageBox(win, { type: 'info', title: 'Statistiques de la caméra', message: 'Statistiques en direct', detail: lines.join('\n') });
 }
 
+// ---------- Aperçu flottant (voir la vidéo sans être sur l'onglet qui utilise la caméra) ----------
+const previewAlive = () => previewWin && !previewWin.isDestroyed();
+
+function previewSend(cmd, arg) {
+  if (previewAlive()) { try { previewWin.webContents.send('pv-cmd', cmd, arg === undefined ? null : arg); } catch (_) {} }
+}
+
+function openPreview() {
+  if (!config.videoPath || !alive()) return;
+  if (previewAlive()) { previewWin.showInactive(); return; }
+  const wa = screen.getDisplayMatching(win.getBounds()).workArea;
+  const w = 360;
+  const h = 224;
+  previewWin = new BrowserWindow({
+    width: w, height: h,
+    x: wa.x + wa.width - w - 16, y: wa.y + wa.height - h - 16,
+    minWidth: 200, minHeight: 130,
+    title: 'Aperçu de la caméra',
+    alwaysOnTop: true, show: false, autoHideMenuBar: true,
+    minimizable: false, maximizable: false, fullscreenable: false,
+    backgroundColor: '#000000',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload-preview.js'),
+      contextIsolation: true, sandbox: true, partition: PARTITION,
+      autoplayPolicy: 'no-user-gesture-required', spellcheck: false
+    }
+  });
+  previewWin.setMenu(null);
+  previewWin.setAlwaysOnTop(true, 'floating');
+  previewWin.loadFile(path.join(__dirname, 'preview.html'), {
+    query: { src: currentVideoUrl(), loop: config.loop ? '1' : '0', paused: videoPaused ? '1' : '0' }
+  });
+  previewWin.once('ready-to-show', () => { if (previewAlive()) previewWin.showInactive(); });
+  previewWin.on('closed', () => { previewWin = null; sendState(); });
+  sendState();
+}
+
+function closePreview() {
+  if (previewAlive()) previewWin.close();
+}
+
+function togglePreview() {
+  if (previewAlive()) closePreview(); else openPreview();
+}
+
 function cameraMenuItems() {
   return [
     {
@@ -492,6 +543,13 @@ function cameraMenuItems() {
     { label: 'Redémarrer la vidéo', enabled: !!config.videoPath, click: restartVideo },
     { label: 'Retirer la vidéo', enabled: !!config.videoPath, click: clearVideo },
     { label: 'Lire en boucle', type: 'checkbox', checked: config.loop, click: (mi) => setLoop(mi.checked) },
+    { type: 'separator' },
+    { label: 'Aperçu flottant de la vidéo', type: 'checkbox', checked: previewAlive(), enabled: !!config.videoPath, click: togglePreview },
+    {
+      label: 'Ouvrir l’aperçu quand une page démarre la caméra',
+      type: 'checkbox', checked: !!config.autoPreview,
+      click: (mi) => { config.autoPreview = mi.checked; saveConfig(); }
+    },
     { type: 'separator' },
     {
       label: 'Résolution de sortie',
@@ -630,6 +688,7 @@ function mainMenuTemplate() {
       checked: !!config.eco,
       click: (mi) => { config.eco = mi.checked; saveConfig(); sendState(); }
     },
+    { label: 'Aperçu flottant de la vidéo', enabled: !!config.videoPath, click: togglePreview },
     { label: 'Page de test de la caméra', click: () => createTab(TEST_PAGE) },
     { label: 'Outils de développement', accelerator: 'F12', click: actions.devtools },
     { type: 'separator' },
@@ -746,6 +805,18 @@ async function askMedia(url) {
 
 function setupSession() {
   ses = session.fromPartition(PARTITION);
+  // Les sites (WhatsApp, Meet…) refusent les navigateurs « Electron » : on se présente comme Chrome
+  const major = String(process.versions.chrome).split('.')[0];
+  ses.setUserAgent(`Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`);
+  const chBrands = `"Chromium";v="${major}", "Google Chrome";v="${major}", "Not?A_Brand";v="99"`;
+  ses.webRequest.onBeforeSendHeaders((details, cb) => {
+    const h = details.requestHeaders;
+    for (const k of Object.keys(h)) {
+      const l = k.toLowerCase();
+      if (l === 'sec-ch-ua') h[k] = chBrands;
+    }
+    cb({ requestHeaders: h });
+  });
   const simple = ['fullscreen', 'clipboard-sanitized-write', 'notifications'];
   ses.setPermissionRequestHandler((wc, permission, cb, details) => {
     if (permission === 'media') {
@@ -822,6 +893,7 @@ function createWindow(firstUrl) {
   });
   win.webContents.on('did-finish-load', sendStateNow);
   win.on('closed', () => {
+    closePreview();
     tabs.forEach((t) => { try { if (t.view) t.view.webContents.close(); } catch (_) {} });
     tabs.length = 0;
     win = null;
@@ -847,9 +919,19 @@ function setupIpc() {
     const tab = tabs.find((t) => t.view && !t.view.webContents.isDestroyed() && t.view.webContents.id === e.sender.id);
     if (!tab) return;
     const key = `${e.processId}:${e.frameId}`;
+    const before = tabs.some((t) => t.cams.size > 0);
     if (active) tab.cams.add(key); else tab.cams.delete(key);
+    if (!before && active && config.autoPreview) openPreview();
     sendState();
   });
+
+  // Position de lecture réelle de la vidéo envoyée : l'aperçu se recale dessus
+  ipcMain.on('cam-time', (_e, t) => { if (typeof t === 'number') previewSend('time', t); });
+  ipcMain.on('preview-size', (e, w, h) => {
+    if (!previewAlive() || e.sender !== previewWin.webContents) return;
+    if (w > 0 && h > 0) previewWin.setAspectRatio(w / h);
+  });
+  ipcMain.handle('toggle-preview', togglePreview);
 
   ipcMain.handle('nav', (_e, url) => {
     const wc = wcOf(activeTab());

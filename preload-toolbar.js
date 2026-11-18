@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('api', {
   toggleSidebar: call('toggle-sidebar'),
   toggleBookmark: call('toggle-bookmark'),
   togglePause: call('toggle-pause'),
+  togglePreview: call('toggle-preview'),
   openBookmark: call('open-bookmark'),
   removeBookmark: call('remove-bookmark'),
   cameraMenu: call('camera-menu'),

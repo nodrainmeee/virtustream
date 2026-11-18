@@ -1,6 +1,6 @@
 {
   "name": "virtustream-browser",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Navigateur web avec onglets verticaux qui utilise une vidéo comme flux caméra virtuel",
   "author": "Votre Nom <vous@example.com>",
   "main": "main.js",
@@ -27,8 +27,10 @@
       "main.js",
       "preload-page.js",
       "preload-toolbar.js",
+      "preload-preview.js",
       "toolbar.html",
       "newtab.html",
+      "preview.html",
       "test.html",
       "package.json"
     ],

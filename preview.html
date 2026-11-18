@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; media-src fakecam: blob:; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+<title>Aperçu de la caméra</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  video { width: 100%; height: 100%; object-fit: contain; display: block; }
+</style>
+</head>
+<body>
+<video id="v" muted playsinline></video>
+<script>
+  const q = new URLSearchParams(location.search);
+  const v = document.getElementById('v');
+  v.muted = true;
+  v.loop = q.get('loop') === '1';
+  let paused = q.get('paused') === '1';
+  v.src = q.get('src');
+  v.addEventListener('loadedmetadata', () => { if (v.videoWidth) pv.size(v.videoWidth, v.videoHeight); });
+  v.addEventListener('loadeddata', () => { if (!paused) v.play().catch(() => {}); });
+  pv.onCommand((cmd, arg) => {
+    if (cmd === 'pause') { paused = true; v.pause(); }
+    else if (cmd === 'play') { paused = false; v.play().catch(() => {}); }
+    else if (cmd === 'restart') { v.currentTime = 0; }
+    else if (cmd === 'loop') { v.loop = !!arg; }
+    else if (cmd === 'source') { v.src = arg; if (!paused) v.play().catch(() => {}); }
+    else if (cmd === 'time') {
+      // Recale sur la position réelle de la vidéo envoyée à la page
+      if (Math.abs(v.currentTime - arg) > 0.4) v.currentTime = arg;
+    }
+  });
+</script>
+</body>
+</html>
