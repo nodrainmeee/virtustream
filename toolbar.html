@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src https: http: data:">
+<meta name="color-scheme" content="dark light">
+<title>VirtuStream Browser</title>
+<style>
+  :root {
+    --frame: #2b2733;
+    --pill: #1f1c26;
+    --hover: #3a3545;
+    --active: #463f57;
+    --line: #3d3748;
+    --text: #e8e3ee;
+    --muted: #a9a2b5;
+    --accent: #cfbcff;
+    --ok: #9fd6a8;
+    --warn: #e6c27a;
+    --side: 52px;
+    --nav-h: 48px;
+    --bm-h: 34px;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --frame: #ebe7f1;
+      --pill: #ffffff;
+      --hover: #dcd6e6;
+      --active: #cfc6e0;
+      --line: #d4cdde;
+      --text: #1f1b24;
+      --muted: #5f586b;
+      --accent: #5b45a6;
+      --ok: #2d7a3e;
+      --warn: #8a5a00;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--frame); color: var(--text);
+    font-family: "Segoe UI", system-ui, sans-serif; font-size: 13px; user-select: none; }
+  button { font: inherit; color: inherit; background: transparent; border: 0; border-radius: 8px; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; padding: 0; -webkit-app-region: no-drag; }
+  button:hover:not(:disabled) { background: var(--hover); }
+  button:disabled { opacity: .35; cursor: default; }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  svg { width: 20px; height: 20px; fill: currentColor; flex: none; }
+  .ib { width: 34px; height: 34px; }
+
+  /* ---------- Panneau d'onglets vertical ---------- */
+  #side { position: fixed; left: 0; top: 0; bottom: 0; width: var(--side); display: flex; flex-direction: column;
+    padding: 8px 8px; gap: 4px; background: var(--frame); transition: width .12s ease; overflow: hidden; }
+  #sidetop { height: 40px; display: flex; align-items: center; flex: none; }
+  #toggle { width: 36px; height: 36px; }
+  #tabs { display: flex; flex-direction: column; gap: 3px; overflow-y: auto; overflow-x: hidden; min-height: 0; flex: 0 1 auto; scrollbar-width: none; }
+  #tabs::-webkit-scrollbar { display: none; }
+  .tab { position: relative; height: 36px; width: 100%; justify-content: flex-start; gap: 10px; padding: 0 9px; border-radius: 10px; text-align: left; }
+  .tab.active { background: var(--active); }
+  .tab.sleep { opacity: .55; }
+  .tab .ico { width: 18px; height: 18px; flex: none; display: flex; align-items: center; justify-content: center; }
+  .tab .ico img { width: 18px; height: 18px; border-radius: 4px; }
+  .tab .ico svg { width: 18px; height: 18px; color: var(--muted); }
+  .tab .title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: none; }
+  .tab .x { display: none; width: 22px; height: 22px; border-radius: 50%; }
+  .tab .x svg { width: 14px; height: 14px; }
+  .tab .dot { position: absolute; left: 24px; top: 6px; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); border: 2px solid var(--frame); }
+  .spin { width: 14px; height: 14px; border: 2px solid var(--accent); border-right-color: transparent; border-radius: 50%; animation: s .8s linear infinite; }
+  @keyframes s { to { transform: rotate(360deg); } }
+  body.expanded .tab .title { display: block; }
+  body.expanded .tab:hover .x, body.expanded .tab.active .x { display: inline-flex; }
+  #newtab { width: 36px; height: 36px; flex: none; }
+  body.expanded #newtab { width: 100%; justify-content: flex-start; padding: 0 9px; gap: 10px; }
+  #newtab .lbl { display: none; }
+  body.expanded #newtab .lbl { display: inline; }
+
+  /* ---------- Barre de navigation (zone déplaçable) ---------- */
+  #nav { position: fixed; left: var(--side); right: 0; top: 0; height: var(--nav-h); display: flex; align-items: center; gap: 2px;
+    padding: 0 8px 0 4px; -webkit-app-region: drag; transition: left .12s ease;
+    padding-right: max(8px, calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 8px)); }
+  #addr { flex: 1 1 auto; min-width: 60px; max-width: 760px; height: 36px; margin: 0 8px; display: flex; align-items: center;
+    background: var(--pill); border-radius: 18px; padding: 0 4px 0 12px; gap: 8px; -webkit-app-region: no-drag; border: 1px solid transparent; }
+  #addr:focus-within { border-color: var(--accent); }
+  #addr .lead { color: var(--muted); display: flex; }
+  #url { flex: 1; min-width: 0; height: 100%; background: transparent; border: 0; outline: none; color: var(--text); font: inherit; font-size: 14px; user-select: text; }
+  #url::placeholder { color: var(--muted); }
+  #star { width: 30px; height: 30px; border-radius: 50%; }
+  #star.on { color: var(--accent); }
+  #gap { flex: 1 1 0; min-width: 0; }
+  #cam.on { color: var(--ok); }
+  #cam.live::after { content: ""; position: absolute; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); margin: -14px -14px 0 0; border: 2px solid var(--frame); }
+  #cam { position: relative; }
+  #pp.paused { color: var(--warn); }
+  .sep { width: 1px; height: 20px; background: var(--line); margin: 0 6px; flex: none; }
+
+  /* ---------- Barre de favoris ---------- */
+  #bm { position: fixed; left: var(--side); right: 0; top: var(--nav-h); height: var(--bm-h); display: flex; align-items: center; gap: 2px;
+    padding: 0 8px; border-bottom: 1px solid var(--line); overflow: hidden; transition: left .12s ease; }
+  body.nobm #bm { display: none; }
+  #bmapps { width: 28px; height: 28px; flex: none; color: var(--muted); }
+  #bmlist { display: flex; gap: 2px; min-width: 0; flex: 0 1 auto; overflow: hidden; }
+  .bmitem { height: 26px; max-width: 170px; padding: 0 9px; gap: 6px; font-size: 12.5px; flex: 0 1 auto; min-width: 0; }
+  .bmitem span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bmitem svg { width: 15px; height: 15px; color: var(--muted); }
+  #hint { color: var(--muted); font-size: 12px; padding-left: 6px; white-space: nowrap; }
+  #toast { margin-left: auto; font-size: 12px; background: var(--active); padding: 4px 12px; border-radius: 14px; white-space: nowrap;
+    cursor: pointer; display: none; max-width: 55%; overflow: hidden; text-overflow: ellipsis; }
+  body.nobm #toast { position: fixed; right: 12px; top: calc(var(--nav-h) + 6px); z-index: 5; display: none; box-shadow: 0 2px 8px #0005; }
+
+  /* ---------- Adaptation aux petites fenêtres ---------- */
+  @media (max-width: 900px) { #addr { max-width: none; } #gap { display: none; } }
+  @media (max-width: 760px) { #dl, .sep { display: none; } .bmitem { max-width: 120px; } }
+  @media (max-width: 620px) { #home, #star { display: none; } #addr { margin: 0 4px; } #hint { display: none; } }
+  @media (max-width: 520px) { #pp { display: none; } .bmitem { max-width: 90px; } }
+</style>
+</head>
+<body>
+<aside id="side">
+  <div id="sidetop">
+    <button id="toggle" title="Réduire / développer les onglets (Ctrl+Maj+E)"></button>
+  </div>
+  <div id="tabs"></div>
+  <button id="newtab" title="Nouvel onglet (Ctrl+T)"></button>
+</aside>
+
+<header id="nav">
+  <button class="ib" id="back" title="Précédent"></button>
+  <button class="ib" id="forward" title="Suivant"></button>
+  <button class="ib" id="reload" title="Actualiser"></button>
+  <button class="ib" id="home" title="Accueil"></button>
+  <div id="addr">
+    <span class="lead" id="lead"></span>
+    <input id="url" placeholder="Rechercher ou saisir une adresse" spellcheck="false" autocomplete="off">
+    <button id="star" title="Ajouter aux favoris (Ctrl+D)"></button>
+  </div>
+  <div id="gap"></div>
+  <button class="ib" id="pp" title="Mettre la vidéo en pause (Ctrl+Maj+P)"></button>
+  <button class="ib" id="cam" title="Caméra virtuelle"></button>
+  <button class="ib" id="dl" title="Téléchargements"></button>
+  <span class="sep"></span>
+  <button class="ib" id="menu" title="Menu"></button>
+</header>
+
+<div id="bm">
+  <button id="bmapps" title="Favoris" tabindex="-1"></button>
+  <span id="hint">Cliquez sur l’étoile pour ajouter un favori</span>
+  <div id="bmlist"></div>
+  <div id="toast"></div>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const P = {
+    back: 'M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z',
+    forward: 'M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8z',
+    reload: 'M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z',
+    close: 'M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z',
+    add: 'M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z',
+    starO: 'M22 9.24l-7.19-.62L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.63-7.03L22 9.24zM12 15.4l-3.76 2.27 1-4.28-3.32-2.88 4.38-.38L12 6.1l1.71 4.04 4.38.38-3.32 2.88 1 4.28L12 15.4z',
+    star: 'M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z',
+    cam: 'M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z',
+    pause: 'M6 19h4V5H6v14zm8-14v14h4V5h-4z',
+    play: 'M8 5v14l11-7z',
+    more: 'M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z',
+    dl: 'M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z',
+    menu: 'M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z',
+    home: 'M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z',
+    globe: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm6.93 6h-2.95a15.65 15.65 0 0 0-1.38-3.56A8.03 8.03 0 0 1 18.93 8zM12 4.04c.83 1.2 1.48 2.53 1.91 3.96h-3.82c.43-1.43 1.08-2.76 1.91-3.96zM4.26 14a8.2 8.2 0 0 1 0-4h3.38a16 16 0 0 0 0 4H4.26zm.82 2h2.95c.32 1.25.78 2.45 1.38 3.56A8 8 0 0 1 5.08 16zm2.95-8H5.08a8 8 0 0 1 4.33-3.56A15.65 15.65 0 0 0 8.03 8zM12 19.96c-.83-1.2-1.48-2.53-1.91-3.96h3.82c-.43 1.43-1.08 2.76-1.91 3.96zM14.34 14H9.66a14.4 14.4 0 0 1 0-4h4.68a14.4 14.4 0 0 1 0 4zm.25 5.56c.6-1.11 1.06-2.31 1.38-3.56h2.95a8.03 8.03 0 0 1-4.33 3.56zM16.36 14a16 16 0 0 0 0-4h3.38a8.2 8.2 0 0 1 0 4h-3.38z',
+    search: 'M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z',
+    apps: 'M4 8h4V4H4v4zm6 12h4v-4h-4v4zm-6 0h4v-4H4v4zm0-6h4v-4H4v4zm6 0h4v-4h-4v4zm6-10v4h4V4h-4zm-6 4h4V4h-4v4zm6 6h4v-4h-4v4zm0 6h4v-4h-4v4z',
+    moon: 'M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8c-.44-.06-.9-.1-1.36-.1z'
+  };
+  const svg = (k) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${P[k]}"/></svg>`;
+  const icon = (k) => { const s = document.createElement('span'); s.innerHTML = svg(k); return s.firstChild; };
+
+  $('toggle').innerHTML = svg('menu');
+  $('back').innerHTML = svg('back');
+  $('forward').innerHTML = svg('forward');
+  $('home').innerHTML = svg('home');
+  $('lead').innerHTML = svg('search');
+  $('cam').innerHTML = svg('cam');
+  $('dl').innerHTML = svg('dl');
+  $('menu').innerHTML = svg('more');
+  $('bmapps').innerHTML = svg('apps');
+  $('newtab').innerHTML = svg('add') + '<span class="lbl">Nouvel onglet</span>';
+  $('reload').innerHTML = svg('reload');
+  $('star').innerHTML = svg('starO');
+  $('pp').innerHTML = svg('pause');
+
+  let toastTimer = null;
+  let loadingNow = false;
+
+  $('toggle').onclick = () => api.toggleSidebar();
+  $('back').onclick = () => api.back();
+  $('forward').onclick = () => api.forward();
+  $('reload').onclick = () => api.reload();
+  $('home').onclick = () => api.home();
+  $('newtab').onclick = () => api.newTab();
+  $('star').onclick = () => api.toggleBookmark();
+  $('pp').onclick = () => api.togglePause();
+  $('dl').onclick = () => api.showDownload();
+  $('cam').onclick = () => { const r = $('cam').getBoundingClientRect(); api.cameraMenu(Math.round(r.left), Math.round(r.bottom)); };
+  $('menu').onclick = () => { const r = $('menu').getBoundingClientRect(); api.mainMenu(Math.round(r.left - 200), Math.round(r.bottom)); };
+  $('toast').onclick = () => api.showDownload();
+  $('url').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') api.nav($('url').value);
+    if (e.key === 'Escape') $('url').blur();
+  });
+  $('url').addEventListener('focus', () => $('url').select());
+
+  function renderTabs(s) {
+    const c = $('tabs');
+    c.textContent = '';
+    s.tabs.forEach((t) => {
+      const el = document.createElement('button');
+      el.className = 'tab' + (t.id === s.activeId ? ' active' : '') + (t.hibernated ? ' sleep' : '');
+      el.title = (t.title || 'Nouvel onglet') + (t.hibernated ? ' (en veille)' : '') + (t.cam ? ' · caméra virtuelle utilisée' : '');
+      el.onclick = () => api.switchTab(t.id);
+      el.onauxclick = (e) => { if (e.button === 1) api.closeTab(t.id); };
+      el.oncontextmenu = (e) => { e.preventDefault(); api.tabMenu(t.id, Math.round(e.clientX), Math.round(e.clientY)); };
+
+      const ico = document.createElement('span');
+      ico.className = 'ico';
+      if (t.loading) {
+        const sp = document.createElement('span');
+        sp.className = 'spin';
+        ico.appendChild(sp);
+      } else if (t.favicon) {
+        const img = document.createElement('img');
+        img.src = t.favicon;
+        img.onerror = () => { ico.textContent = ''; ico.appendChild(icon('globe')); };
+        ico.appendChild(img);
+      } else {
+        ico.appendChild(icon('globe'));
+      }
+
+      const title = document.createElement('span');
+      title.className = 'title';
+      title.textContent = t.title || 'Nouvel onglet';
+
+      const x = document.createElement('span');
+      x.className = 'x';
+      x.innerHTML = svg('close');
+      x.title = 'Fermer l’onglet';
+      x.onclick = (e) => { e.stopPropagation(); api.closeTab(t.id); };
+      x.style.alignItems = 'center'; x.style.justifyContent = 'center'; x.style.borderRadius = '50%';
+
+      el.append(ico, title, x);
+      if (t.cam) { const d = document.createElement('span'); d.className = 'dot'; el.appendChild(d); }
+      c.appendChild(el);
+    });
+  }
+
+  function renderBookmarks(s) {
+    const list = $('bmlist');
+    list.textContent = '';
+    $('hint').style.display = s.bookmarks.length ? 'none' : '';
+    s.bookmarks.forEach((b) => {
+      const btn = document.createElement('button');
+      btn.className = 'bmitem';
+      btn.append(icon('globe'));
+      const sp = document.createElement('span');
+      sp.textContent = b.title || b.url;
+      btn.append(sp);
+      btn.title = b.url + '\n(clic droit pour supprimer)';
+      btn.onclick = () => api.openBookmark(b.url);
+      btn.oncontextmenu = (e) => { e.preventDefault(); api.removeBookmark(b.url); };
+      list.appendChild(btn);
+    });
+  }
+
+  api.onState((s) => {
+    document.documentElement.style.setProperty('--side', s.sideW + 'px');
+    document.body.classList.toggle('expanded', s.sideExpanded);
+    document.body.classList.toggle('nobm', !s.showBookmarks);
+    $('side').style.display = s.fullscreen ? 'none' : '';
+    renderTabs(s);
+    renderBookmarks(s);
+    $('back').disabled = !s.canGoBack;
+    $('forward').disabled = !s.canGoForward;
+    if (loadingNow !== s.loading) { loadingNow = s.loading; $('reload').innerHTML = svg(s.loading ? 'close' : 'reload'); }
+    $('reload').title = s.loading ? 'Arrêter le chargement' : 'Actualiser';
+    if (document.activeElement !== $('url')) $('url').value = s.url;
+    $('star').innerHTML = svg(s.isBookmarked ? 'star' : 'starO');
+    $('star').className = s.isBookmarked ? 'on' : '';
+    $('star').disabled = !/^https?:/i.test(s.url);
+    $('cam').className = (s.videoName ? 'ib on' : 'ib') + (s.camActive ? ' live' : '');
+    $('cam').title = s.videoName
+      ? 'Caméra virtuelle : ' + s.videoName + (s.camActive ? ' (utilisée par une page)' : '')
+      : 'Caméra virtuelle : aucune vidéo (caméra réelle)';
+    $('pp').disabled = !s.videoName;
+    $('pp').className = 'ib' + (s.videoPaused ? ' paused' : '');
+    $('pp').innerHTML = svg(s.videoPaused ? 'play' : 'pause');
+    $('pp').title = s.videoPaused ? 'Reprendre la vidéo (Ctrl+Maj+P)' : 'Mettre la vidéo en pause (Ctrl+Maj+P)';
+    const active = s.tabs.find((t) => t.id === s.activeId);
+    document.title = (active && active.title ? active.title + ' — ' : '') + 'VirtuStream Browser';
+  });
+
+  api.onFocusUrl(() => { $('url').focus(); $('url').select(); });
+
+  api.onToast((msg) => {
+    const t = $('toast');
+    t.textContent = msg;
+    t.style.display = 'block';
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { t.style.display = 'none'; }, 6000);
+  });
+</script>
+</body>
+</html>
