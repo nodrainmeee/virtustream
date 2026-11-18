@@ -201,9 +201,67 @@ function sendStateNow() {
     showBookmarks: config.showBookmarks,
     fullscreen: htmlFullscreen,
     eco: config.eco,
-    camActive: tabs.some((t) => t.cams.size > 0),
+    camActive: tabs.some((t) => t.cams.size > 0) || popupCams.size > 0,
     previewOpen: !!previewWin && !previewWin.isDestroyed()
   });
+}
+
+// ---------- Fenêtres secondaires (fenêtre d'appel WhatsApp Web, etc.) ----------
+const popups = new Set();      // BrowserWindow ouvertes par window.open()
+const popupCams = new Set();   // « idWebContents:processus:frame » des popups qui utilisent la caméra
+
+function isCallPopup(openerUrl, targetUrl, disposition) {
+  const openerOrigin = originOf(openerUrl);
+  if (!/^https:\/\//i.test(openerOrigin)) return false;
+  const blank = !targetUrl || targetUrl === 'about:blank';
+  const sameOrigin = blank || originOf(targetUrl) === openerOrigin;
+  if (!sameOrigin) return false;
+  if (/(^|\.)whatsapp\.com$/i.test(new URL(openerOrigin).hostname)) return true;
+  return disposition === 'new-window'; // window.open(url, nom, 'width=…') d'un même site
+}
+
+function popupWindowOptions() {
+  return {
+    width: 460,
+    height: 760,
+    minWidth: 320,
+    minHeight: 420,
+    show: true,
+    autoHideMenuBar: true,
+    backgroundColor: '#111b21',
+    parent: alive() ? win : undefined,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload-page.js'),
+      contextIsolation: true,
+      sandbox: true,
+      nodeIntegrationInSubFrames: true,
+      partition: PARTITION,
+      autoplayPolicy: 'no-user-gesture-required',
+      spellcheck: false
+    }
+  };
+}
+
+function registerPopup(child) {
+  popups.add(child);
+  const pwc = child.webContents;
+  const id = pwc.id;
+  try { child.setMenuBarVisibility(false); } catch (_) {}
+  // Les fenêtres ouvertes depuis la popup suivent les mêmes règles
+  pwc.setWindowOpenHandler(({ url: u, disposition }) => {
+    if (isCallPopup(pwc.getURL(), u, disposition)) {
+      return { action: 'allow', overrideBrowserWindowOptions: popupWindowOptions() };
+    }
+    if (/^https?:/i.test(u)) createTab(u);
+    return { action: 'deny' };
+  });
+  pwc.on('did-create-window', (c) => registerPopup(c));
+  child.on('closed', () => {
+    popups.delete(child);
+    for (const k of [...popupCams]) if (k.startsWith(id + ':')) popupCams.delete(k);
+    sendState();
+  });
+  sendState();
 }
 
 // ---------- Onglets ----------
@@ -223,10 +281,20 @@ function buildView(tab, url) {
   tab.hibernated = false;
   const wc = view.webContents;
 
-  wc.setWindowOpenHandler(({ url: u }) => {
+  wc.setWindowOpenHandler(({ url: u, disposition }) => {
+    // Fenêtres d'appel (WhatsApp Web, Meet…) : la page garde un lien avec sa fenêtre (window.opener),
+    // il faut donc ouvrir une vraie fenêtre secondaire et non un onglet.
+    if (isCallPopup(wc.getURL(), u, disposition)) {
+      return {
+        action: 'allow',
+        outlivesOpener: false,
+        overrideBrowserWindowOptions: popupWindowOptions()
+      };
+    }
     if (/^https?:/i.test(u)) createTab(u);
     return { action: 'deny' };
   });
+  wc.on('did-create-window', (child) => registerPopup(child));
   wc.on('page-title-updated', (_e, title) => { tab.title = title || tab.title; sendState(); });
   wc.on('page-favicon-updated', (_e, icons) => { tab.favicon = icons[0] || null; sendState(); });
   wc.on('did-navigate', (_e, navUrl) => {
@@ -416,9 +484,10 @@ function setLoop(v) {
 }
 
 function sendVideoCommand(cmd, arg) {
-  tabs.forEach((t) => {
-    const wc = wcOf(t);
-    if (!wc) return;
+  const targets = tabs.map((t) => wcOf(t));
+  popups.forEach((w) => { if (!w.isDestroyed()) targets.push(w.webContents); });
+  targets.forEach((wc) => {
+    if (!wc || wc.isDestroyed()) return;
     wc.mainFrame.framesInSubtree.forEach((f) => {
       try { f.send('fakecam-control', cmd, arg); } catch (_) {}
     });
@@ -814,14 +883,18 @@ async function askMedia(url) {
 function setupSession() {
   ses = session.fromPartition(PARTITION);
   // Les sites (WhatsApp, Meet…) refusent les navigateurs « Electron » : on se présente comme Chrome
-  const major = String(process.versions.chrome).split('.')[0];
+  const fullVer = String(process.versions.chrome);
+  const major = fullVer.split('.')[0];
   ses.setUserAgent(`Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`);
   const chBrands = `"Chromium";v="${major}", "Google Chrome";v="${major}", "Not?A_Brand";v="99"`;
+  const chFull = `"Chromium";v="${fullVer}", "Google Chrome";v="${fullVer}", "Not?A_Brand";v="99.0.0.0"`;
   ses.webRequest.onBeforeSendHeaders((details, cb) => {
     const h = details.requestHeaders;
     for (const k of Object.keys(h)) {
       const l = k.toLowerCase();
       if (l === 'sec-ch-ua') h[k] = chBrands;
+      else if (l === 'sec-ch-ua-full-version-list') h[k] = chFull;
+      else if (l === 'sec-ch-ua-full-version') h[k] = `"${fullVer}"`;
     }
     cb({ requestHeaders: h });
   });
@@ -931,9 +1004,17 @@ function setupIpc() {
   // Une page signale qu'elle utilise (ou n'utilise plus) la caméra virtuelle
   ipcMain.on('cam-state', (e, active) => {
     const tab = tabs.find((t) => t.view && !t.view.webContents.isDestroyed() && t.view.webContents.id === e.sender.id);
-    if (!tab) return;
     const key = `${e.processId}:${e.frameId}`;
-    const before = tabs.some((t) => t.cams.size > 0);
+    const before = tabs.some((t) => t.cams.size > 0) || popupCams.size > 0;
+    if (!tab) {
+      // Fenêtre d'appel ouverte par une page (popup)
+      if (![...popups].some((w) => !w.isDestroyed() && w.webContents.id === e.sender.id)) return;
+      const pk = `${e.sender.id}:${key}`;
+      if (active) popupCams.add(pk); else popupCams.delete(pk);
+      if (!before && active && config.autoPreview) openPreview();
+      sendState();
+      return;
+    }
     if (active) tab.cams.add(key); else tab.cams.delete(key);
     if (!before && active && config.autoPreview) openPreview();
     sendState();

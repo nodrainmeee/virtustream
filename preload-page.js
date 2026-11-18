@@ -228,22 +228,50 @@ function inject(cfg) {
   window.addEventListener('pagehide', () => { users = 0; release(); });
 }
 
-// Identité « Google Chrome » pour les sites qui lisent navigator.userAgentData
-function spoofBrands(major) {
+// Identité « Google Chrome » complète : userAgentData (brands, versions complètes, plate-forme)
+// et objet window.chrome, que les sites (WhatsApp Web appels, Meet…) testent pour reconnaître Chrome.
+function spoofBrands(fullVersion) {
   try {
-    const ua = navigator.userAgentData;
-    if (!ua) return;
+    const major = String(fullVersion).split('.')[0];
     const brands = [
       { brand: 'Chromium', version: major },
       { brand: 'Google Chrome', version: major },
       { brand: 'Not?A_Brand', version: '99' }
     ];
-    Object.defineProperty(Object.getPrototypeOf(ua), 'brands', { get: () => brands, configurable: true });
+    const full = [
+      { brand: 'Chromium', version: fullVersion },
+      { brand: 'Google Chrome', version: fullVersion },
+      { brand: 'Not?A_Brand', version: '99.0.0.0' }
+    ];
+    const ua = navigator.userAgentData;
+    if (ua) {
+      const proto = Object.getPrototypeOf(ua);
+      Object.defineProperty(proto, 'brands', { get: () => brands, configurable: true });
+      const origHigh = proto.getHighEntropyValues;
+      proto.getHighEntropyValues = async function (hints) {
+        let r = {};
+        try { r = await origHigh.call(this, hints); } catch (_) {}
+        r.brands = brands;
+        r.fullVersionList = full;
+        r.uaFullVersion = fullVersion;
+        return r;
+      };
+      proto.toJSON = function () {
+        return { brands, mobile: this.mobile, platform: this.platform };
+      };
+    }
+  } catch (_) {}
+  try {
+    if (!window.chrome) window.chrome = {};
+    const c = window.chrome;
+    if (!c.app) c.app = { isInstalled: false, InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' }, RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' } };
+    if (!c.runtime) c.runtime = {};
+    if (!c.loadTimes) c.loadTimes = function () { return {}; };
+    if (!c.csi) c.csi = function () { return {}; };
   } catch (_) {}
 }
 try {
-  const major = String(process.versions.chrome).split('.')[0];
-  webFrame.executeJavaScript(`(${spoofBrands.toString()})(${JSON.stringify(major)})`);
+  webFrame.executeJavaScript(`(${spoofBrands.toString()})(${JSON.stringify(process.versions.chrome)})`);
 } catch (_) {}
 
 try {
